@@ -44,7 +44,7 @@ export function Chart({ series, benchmarks, mode, onModeChange }: {
 function ChartInner({ width, height, series, benchmarks, mode }: {
   width: number; height: number; series: ValuePoint[]; benchmarks: BenchmarkSeries[]; mode: Mode;
 }) {
-  const margin = { top: 12, right: 12, bottom: 28, left: 56 };
+  const margin = { top: 12, right: 12, bottom: 28, left: 76 };
   const innerW = Math.max(0, width - margin.left - margin.right);
   const innerH = Math.max(0, height - margin.top - margin.bottom);
 
