@@ -170,14 +170,22 @@ Date, Time, Value date, Product, ISIN, Description, FX, Change, Balance, Order I
 - Glass card container
 - Time range tabs above
 - Toggle pill: **Value €** / **P/L €** — switches y-axis + line color
-- Hover: date, value, P/L €, day-over-day Δ
+- Hover: date, value, P/L €, day-over-day Δ, **plus benchmark % at hover date**
 - Smooth curve, no markers (clean Liquid Glass style)
 - For `1D` range: use 5-min interval Yahoo data; for `1W`–`1M`: daily; for `1Y`–`ALL`: daily decimated if > 365 points
+- **Benchmark overlay**: one or more comparison series (S&P 500, MSCI World, NASDAQ-100, custom ticker) rebased to portfolio start value at the left edge of the selected time range, so visual % comparison is direct. Lighter weight, dashed style, distinct from portfolio line. Tooltip shows benchmark % return at hover date alongside portfolio % return.
 
 ### TimeRangeTabs
 - Pill group: `1D` `1W` `MTD` `1M` `YTD` `1Y` `ALL` `Custom`
 - `Custom` opens date-range picker (two date inputs)
 - Active tab: glass accent + subtle inner glow
+
+### BenchmarkSelector
+- Multi-select chip group below chart: `S&P 500` `MSCI World` `NASDAQ-100` `+ Add custom...`
+- Defaults: S&P 500 enabled, others off
+- Custom input accepts any Yahoo ticker (e.g. `^STOXX50E`, `URTH`, `QQQ`)
+- Selections persisted to localStorage
+- Pre-mapped symbols: `^GSPC` (S&P 500), `URTH` (MSCI World ETF), `^NDX` (NASDAQ-100)
 
 ### Holdings table
 Columns: **Name | Qty | BEP | Current | Value | Price Return % | Income Return % | Total Return % | % of Book | Currency**
@@ -251,12 +259,13 @@ Columns: **Name | Qty | BEP | Current | Value | Price Return % | Income Return %
 9. Chart component + time-range tabs
 10. Returns decomposition (price/income/cost ratio)
 11. Allocation donut
-12. Error handling polish + empty/error states
+12. **Benchmark overlay** (S&P 500 default, MSCI World / NASDAQ / custom ticker)
+13. Error handling polish + empty/error states
 
 **Phase 3 — Ship**
-13. Tests (Vitest + Playwright)
-14. Deploy to Vercel
-15. README + DEGIRO export instructions modal
+14. Tests (Vitest + Playwright)
+15. Deploy to Vercel
+16. README + DEGIRO export instructions modal
 
 ## Open questions (resolved at spec time)
 
@@ -270,7 +279,6 @@ Columns: **Name | Qty | BEP | Current | Value | Price Return % | Income Return %
 
 - Multi-broker (IBKR, eToro)
 - Tax estimation (Irish CGT, deemed disposal on UCITS ETFs)
-- Benchmark overlay (S&P/MSCI World)
 - Realized P/L on closed positions
 - Mobile-first layout
 - CSV/PDF export
