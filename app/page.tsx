@@ -9,6 +9,7 @@ import { Dropzone } from "@/components/Dropzone";
 import { KPIRow } from "@/components/KPIRow";
 import { Holdings, type HoldingRow } from "@/components/Holdings";
 import { AllocationDonut } from "@/components/AllocationDonut";
+import { EmptyState } from "@/components/EmptyState";
 import { Chart } from "@/components/Chart";
 import { TimeRangeTabs } from "@/components/TimeRangeTabs";
 import { BenchmarkSelector, loadSavedBenchmarks, type BenchmarkSelection } from "@/components/BenchmarkSelector";
@@ -196,6 +197,8 @@ export default function Page() {
       ) : null}
 
       <Dropzone onFile={onFile} status={status} />
+
+      {!ready ? <EmptyState /> : null}
 
       {ready && returns ? (
         <>
