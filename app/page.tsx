@@ -8,6 +8,7 @@ import { totalFeesEur, totalDividendsEur, cashBalanceEur } from "@/lib/portfolio
 import { Dropzone } from "@/components/Dropzone";
 import { KPIRow } from "@/components/KPIRow";
 import { Holdings, type HoldingRow } from "@/components/Holdings";
+import { AllocationDonut } from "@/components/AllocationDonut";
 import { Chart } from "@/components/Chart";
 import { TimeRangeTabs } from "@/components/TimeRangeTabs";
 import { BenchmarkSelector, loadSavedBenchmarks, type BenchmarkSelection } from "@/components/BenchmarkSelector";
@@ -204,7 +205,10 @@ export default function Page() {
             <BenchmarkSelector value={benchmarks} onChange={setBenchmarks} />
           </div>
           <Chart series={windowed} benchmarks={windowedBench} mode={mode} onModeChange={setMode} />
-          <Holdings rows={rows} />
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_320px] gap-4">
+            <Holdings rows={rows} />
+            <AllocationDonut data={rows.map((r) => ({ label: r.name, value: r.valueEur }))} />
+          </div>
         </>
       ) : null}
     </main>
