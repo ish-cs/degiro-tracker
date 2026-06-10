@@ -1,26 +1,50 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+@theme {
+  --color-bg-base: oklch(0.18 0.02 240);
+  --color-bg-elevated: oklch(0.22 0.025 240);
+  --color-glass-fill: oklch(1 0 0 / 0.06);
+  --color-glass-border: oklch(1 0 0 / 0.10);
+  --color-text-primary: oklch(0.96 0.005 240);
+  --color-text-secondary: oklch(0.72 0.015 240);
+  --color-text-muted: oklch(0.55 0.02 240);
+  --color-accent: oklch(0.78 0.13 200);
+  --color-positive: oklch(0.78 0.18 145);
+  --color-negative: oklch(0.70 0.22 25);
+
+  --font-display: "SF Pro Display", "Inter", system-ui, sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, monospace;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html, body {
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: var(--font-display);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "tnum" 1, "ss01" 1;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 15% 20%, oklch(0.45 0.15 200 / 0.35), transparent 50%),
+    radial-gradient(circle at 85% 60%, oklch(0.40 0.18 280 / 0.30), transparent 55%),
+    radial-gradient(circle at 50% 90%, oklch(0.45 0.15 160 / 0.25), transparent 50%);
+  filter: blur(60px);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+.glass {
+  background: var(--color-glass-fill);
+  border: 1px solid var(--color-glass-border);
+  backdrop-filter: blur(20px) saturate(140%);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 0 oklch(1 0 0 / 0.08) inset,
+    0 20px 40px -20px oklch(0 0 0 / 0.40);
 }
+
+.tabular { font-variant-numeric: tabular-nums; }
+.mono { font-family: var(--font-mono); }
