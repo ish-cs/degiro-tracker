@@ -8,7 +8,12 @@ import { totalFeesEur, totalDividendsEur, cashBalanceEur } from "@/lib/portfolio
 import { Dropzone } from "@/components/Dropzone";
 import { KPIRow } from "@/components/KPIRow";
 import { Holdings, type HoldingRow } from "@/components/Holdings";
-import type { Tx, CashEvent } from "@/lib/types";
+import { Chart } from "@/components/Chart";
+import { TimeRangeTabs } from "@/components/TimeRangeTabs";
+import { BenchmarkSelector, loadSavedBenchmarks, type BenchmarkSelection } from "@/components/BenchmarkSelector";
+import { valueSeries } from "@/lib/portfolio/value-series";
+import { rangeBounds, type RangeId } from "@/lib/range";
+import type { Tx, CashEvent, ValuePoint, BenchmarkSeries } from "@/lib/types";
 
 type SlotStatus = { transactions: "idle"|"ready"|"error"; account: "idle"|"ready"|"error" };
 type LiveData = {
@@ -24,6 +29,11 @@ export default function Page() {
   const [status, setStatus] = useState<SlotStatus>({ transactions: "idle", account: "idle" });
   const [live, setLive] = useState<LiveData | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [range, setRange] = useState<RangeId>("YTD");
+  const [mode, setMode] = useState<"value" | "pl">("value");
+  const [benchmarks, setBenchmarks] = useState<BenchmarkSelection>(() => loadSavedBenchmarks());
+  const [histByIsin, setHistByIsin] = useState<Record<string, { t: number; close: number }[]>>({});
+  const [benchSeries, setBenchSeries] = useState<BenchmarkSeries[]>([]);
 
   useEffect(() => {
     const raw = typeof window !== "undefined" ? localStorage.getItem(LS_KEY) : null;
@@ -73,6 +83,32 @@ export default function Page() {
     })();
   }, [positions]);
 
+  useEffect(() => {
+    if (positions.length === 0) { setHistByIsin({}); return; }
+    (async () => {
+      try {
+        const entries = await Promise.all(positions.map(async (p) => {
+          const r = await fetch(`/api/history?symbol=${encodeURIComponent(p.yahooSymbol)}&range=5y`).then((r) => r.json());
+          return [p.isin, r.points ?? []] as const;
+        }));
+        setHistByIsin(Object.fromEntries(entries));
+      } catch {}
+    })();
+  }, [positions]);
+
+  useEffect(() => {
+    if (benchmarks.length === 0) { setBenchSeries([]); return; }
+    (async () => {
+      try {
+        const series = await Promise.all(benchmarks.map(async (b) => {
+          const r = await fetch(`/api/history?symbol=${encodeURIComponent(b.symbol)}&range=5y`).then((r) => r.json());
+          return { id: b.id, label: b.label, symbol: b.symbol, points: r.points ?? [] };
+        }));
+        setBenchSeries(series);
+      } catch {}
+    })();
+  }, [benchmarks]);
+
   const ready = txs.length > 0 && live;
   const dividendsByIsin = useMemo(() => totalDividendsEur(cashEvents), [cashEvents]);
   const feesEur = useMemo(() => totalFeesEur(cashEvents), [cashEvents]);
@@ -109,6 +145,26 @@ export default function Page() {
 
   const cash = useMemo(() => cashBalanceEur(cashEvents), [cashEvents]);
 
+  const firstTxIso = txs[0]?.date ?? new Date().toISOString().slice(0,10);
+
+  const fullSeries: ValuePoint[] = useMemo(() => {
+    if (positions.length === 0 || Object.keys(histByIsin).length === 0 || !live) return [];
+    return valueSeries(txs, cashEvents, histByIsin, { USDEUR: live.fxUsdEur });
+  }, [positions, txs, cashEvents, histByIsin, live]);
+
+  const windowed = useMemo(() => {
+    if (fullSeries.length === 0) return [];
+    const { from, to } = rangeBounds(range, firstTxIso);
+    const fromTs = Math.floor(from.getTime() / 1000), toTs = Math.floor(to.getTime() / 1000);
+    return fullSeries.filter((p) => p.t >= fromTs && p.t <= toTs);
+  }, [fullSeries, range, firstTxIso]);
+
+  const windowedBench = useMemo(() => {
+    if (benchSeries.length === 0 || windowed.length === 0) return [];
+    const fromTs = windowed[0].t, toTs = windowed[windowed.length - 1].t;
+    return benchSeries.map((b) => ({ ...b, points: b.points.filter((p) => p.t >= fromTs && p.t <= toTs) }));
+  }, [benchSeries, windowed]);
+
   const onFile = async (slot: keyof SlotStatus, text: string) => {
     try {
       if (slot === "transactions") setTxs(parseTransactionsCsv(text));
@@ -143,6 +199,11 @@ export default function Page() {
       {ready && returns ? (
         <>
           <KPIRow r={returns} cashEur={cash} />
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <TimeRangeTabs value={range} onChange={setRange} />
+            <BenchmarkSelector value={benchmarks} onChange={setBenchmarks} />
+          </div>
+          <Chart series={windowed} benchmarks={windowedBench} mode={mode} onModeChange={setMode} />
           <Holdings rows={rows} />
         </>
       ) : null}
