@@ -18,7 +18,7 @@ export function Dropzone({ onFile, status }: Props) {
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {slots.map((s) => (
-        <Slot key={s.key} {...s} state={status[s.key]} onFile={(t) => onFile(s.key, t)} />
+        <Slot key={s.key} label={s.label} hint={s.hint} state={status[s.key]} onFile={(t) => onFile(s.key, t)} />
       ))}
     </div>
   );
