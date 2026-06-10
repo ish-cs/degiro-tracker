@@ -1,0 +1,4 @@
+Date,Time,Product,ISIN,Reference,Exchange,Quantity,Price,Local value,Value,Exchange rate,Fee,Total,Order ID
+10-06-2026,15:31,Constellation Energy Corp,US21037T1097,abc-1,NDQ,4,244.00,-976.00,-846.26,1.1535,-0.50,-846.76,ord-1
+05-03-2026,14:02,Vistra Corp,US92840M1027,abc-2,NSY,7,164.08,-1148.56,-1056.34,1.0872,-0.50,-1056.84,ord-2
+01-02-2025,09:15,Alphabet Inc Class A,US02079K3059,abc-3,TDG,30,265.91,-7977.30,-7977.30,1.0000,-2.50,-7979.80,ord-3
