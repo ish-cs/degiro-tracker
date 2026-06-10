@@ -32,14 +32,19 @@ export function valueSeries(
     currency[isin] = c === "USD" || c === "GBP" ? c : "EUR";
   }
 
+  const lastClose: Record<string, number | null> = {};
+  for (const isin of isins) lastClose[isin] = null;
+
   const points: ValuePoint[] = [];
   for (const t of days) {
     const iso = isoFromTs(t);
     let value = 0, cost = 0;
     for (const isin of isins) {
       const qty = qtyAtDate(txs, isin, iso);
+      const todayClose = lookup[isin][t];
+      if (todayClose != null) lastClose[isin] = todayClose;
       if (qty === 0) continue;
-      const close = lookup[isin][t];
+      const close = lastClose[isin];
       if (close == null) continue;
       const fx = currency[isin] === "USD" ? (fxToEur.USDEUR ?? 1)
                 : currency[isin] === "GBP" ? (fxToEur.GBPEUR ?? 1)

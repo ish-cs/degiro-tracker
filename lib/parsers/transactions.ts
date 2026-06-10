@@ -14,9 +14,19 @@ const parseEuropeanDate = (raw: string): string => {
   return `${yyyy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
 };
 
-const num = (raw: string): number => {
-  if (raw === "" || raw == null) return 0;
-  return Number(raw.replace(/\s/g, "").replace(",", "."));
+const num = (raw: string | undefined | null): number => {
+  if (!raw) return 0;
+  const cleaned = raw.replace(/\s/g, "").replace(",", ".");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const pick = (row: Record<string, string>, ...keys: string[]): string => {
+  for (const k of keys) {
+    const v = row[k];
+    if (v !== undefined && v !== "") return v;
+  }
+  return "";
 };
 
 export function parseTransactionsCsv(text: string): Tx[] {
@@ -28,11 +38,13 @@ export function parseTransactionsCsv(text: string): Tx[] {
   return data
     .filter((row) => row["ISIN"] && row["Date"])
     .map((row) => {
-      const exchange = (row["Exchange"] ?? "").toUpperCase();
+      const exchange = (pick(row, "Reference exchange", "Exchange") || "").toUpperCase();
       const localCurrency = exchangeCurrency[exchange] ?? "EUR";
-      const qty = num(row["Quantity"]);
-      const fxRate = num(row["Exchange rate"]) || 1.0;
-      const feeAbs = Math.abs(num(row["Fee"]));
+      const qty = num(pick(row, "Quantity"));
+      const fxRate = num(pick(row, "Exchange rate")) || 1.0;
+      const autoFxFee = Math.abs(num(pick(row, "AutoFX Fee")));
+      const txFee = Math.abs(num(pick(row, "Transaction and/or third party fees EUR", "Fee")));
+      const feeEur = autoFxFee + txFee;
 
       return {
         date: parseEuropeanDate(row["Date"]),
@@ -41,14 +53,14 @@ export function parseTransactionsCsv(text: string): Tx[] {
         isin: row["ISIN"],
         exchange,
         quantity: qty,
-        price: num(row["Price"]),
+        price: num(pick(row, "Price")),
         localCurrency,
-        valueLocal: Math.abs(num(row["Local value"])),
-        valueEur: Math.abs(num(row["Value"])),
+        valueLocal: Math.abs(num(pick(row, "Local value"))),
+        valueEur: Math.abs(num(pick(row, "Value EUR", "Value"))),
         fxRate,
-        feeEur: feeAbs,
-        totalEur: num(row["Total"]),
-        orderId: row["Order ID"] ?? "",
+        feeEur,
+        totalEur: num(pick(row, "Total EUR", "Total")),
+        orderId: pick(row, "Order ID", "Order Id"),
       } as Tx;
     });
 }

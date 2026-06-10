@@ -17,5 +17,12 @@ export function totalDividendsEur(events: CashEvent[]): Record<string, number> {
 }
 
 export function cashBalanceEur(events: CashEvent[]): number {
-  return events.reduce((acc, e) => acc + e.amountEur, 0);
+  // Use latest reported balance from broker, not sum of changes.
+  // Summing double-counts internal sweep transfers and FX pair events.
+  if (events.length === 0) return 0;
+  let latest = events[0];
+  for (const e of events) {
+    if (e.date.localeCompare(latest.date) > 0) latest = e;
+  }
+  return Number.isFinite(latest.balanceEur) ? latest.balanceEur : 0;
 }
