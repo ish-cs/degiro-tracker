@@ -18,7 +18,9 @@ import type { CashEvent, ValuePoint, BenchmarkSeries } from "@/lib/types";
 
 type LiveData = {
   prices: Record<string, { priceEur: number; currency: string; raw: number }>;
-  fxUsdEur: number;
+  // EUR-per-1-unit-of-foreign for every non-EUR currency present in
+  // the user's portfolio (e.g. { USD: 0.866, GBP: 1.17 }).
+  fxToEur: Record<string, number>;
 };
 
 const LS_KEY = "degiro-tracker:v2";
@@ -63,6 +65,10 @@ export default function Page() {
   const [benchmarks, setBenchmarks] = useState<BenchmarkSelection>([]);
   const [histByIsin, setHistByIsin] = useState<Record<string, { t: number; close: number }[]>>({});
   const [benchSeries, setBenchSeries] = useState<BenchmarkSeries[]>([]);
+  const badBenchmarks = useMemo(
+    () => benchSeries.filter((s) => s.points.length === 0).map((s) => s.label),
+    [benchSeries],
+  );
 
   // Effect intentionally hydrates state from localStorage post-mount.
   // The source of truth (browser storage) doesn't exist on the server,
@@ -78,7 +84,17 @@ export default function Page() {
   useEffect(() => {
     if (!mounted) return;
     if (cashEvents.length) {
-      localStorage.setItem(LS_KEY, JSON.stringify({ cashEvents, savedAt: Date.now() }));
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify({ cashEvents, savedAt: Date.now() }));
+      } catch (e) {
+        // QuotaExceededError: CSV too large to persist. setState in
+        // response to an external-system failure is the right shape.
+        /* eslint-disable react-hooks/set-state-in-effect */
+        if (e instanceof DOMException && e.name === "QuotaExceededError") {
+          setErrorMsg("Couldn't save your data — your browser's storage is full. The app will work for this session but you'll have to re-upload next time.");
+        }
+        /* eslint-enable react-hooks/set-state-in-effect */
+      }
     }
   }, [cashEvents, mounted]);
 
@@ -92,22 +108,34 @@ export default function Page() {
     const symbols = positions.map((p) => p.yahooSymbol);
     (async () => {
       try {
-        const [pr, fxRes] = await Promise.all([
-          fetch(`/api/price?symbols=${symbols.join(",")}`).then((r) => r.json()),
-          fetch(`/api/fx?pair=USDEUR`).then((r) => r.json()),
-        ]);
+        // Fetch live prices first; the response tells us which currencies
+        // we actually need FX for (the Yahoo listing's currency, not the
+        // currency we recorded on the buy).
+        const pr = await fetch(`/api/price?symbols=${symbols.join(",")}`).then((r) => r.json());
         if (cancelled) return;
-        const fxUsdEur = fxRes.price ?? 1;
+        const neededCcys = new Set<string>();
+        for (const sym of symbols) {
+          const ccy = pr[sym]?.currency;
+          if (ccy && ccy !== "EUR") neededCcys.add(ccy);
+        }
+        const fxResults = await Promise.all(
+          [...neededCcys].map(async (ccy) => {
+            const res = await fetch(`/api/fx?pair=${ccy}EUR`).then((r) => r.json());
+            return [ccy, res.price ?? 1] as const;
+          }),
+        );
+        if (cancelled) return;
+        const fxToEur: Record<string, number> = { EUR: 1 };
+        for (const [ccy, rate] of fxResults) fxToEur[ccy] = rate;
+
         const prices: LiveData["prices"] = {};
         for (const p of positions) {
           const q = pr[p.yahooSymbol];
           if (!q) continue;
-          const eur = q.currency === "USD" ? q.price * fxUsdEur
-                   : q.currency === "EUR" ? q.price
-                   : q.price;
-          prices[p.isin] = { priceEur: eur, currency: q.currency, raw: q.price };
+          const rate = fxToEur[q.currency] ?? 1;
+          prices[p.isin] = { priceEur: q.price * rate, currency: q.currency, raw: q.price };
         }
-        setLive({ prices, fxUsdEur });
+        setLive({ prices, fxToEur });
         setPriceErr(null);
       } catch (e) {
         if (!cancelled) setPriceErr(e instanceof Error ? e.message : "price fetch failed");
@@ -132,7 +160,6 @@ export default function Page() {
   }, [positions]);
 
   useEffect(() => {
-    if (benchmarks.length === 0) return;
     let cancelled = false;
     (async () => {
       try {
@@ -141,13 +168,24 @@ export default function Page() {
           return { id: b.id, label: b.label, symbol: b.symbol, points: r.points ?? [] };
         }));
         if (!cancelled) setBenchSeries(series);
-      } catch {}
+      } catch {
+        if (!cancelled) {
+          // Mark all current benchmarks as failed so the user sees a warning.
+          setBenchSeries(benchmarks.map((b) => ({ ...b, points: [] })));
+        }
+      }
     })();
     return () => { cancelled = true; };
   }, [benchmarks]);
 
   const ready = txs.length > 0 && live;
-  const fx = useMemo(() => ({ USDEUR: live?.fxUsdEur ?? 1 }), [live]);
+  const fx = useMemo(
+    () => ({
+      USDEUR: live?.fxToEur.USD ?? 1,
+      GBPEUR: live?.fxToEur.GBP ?? 1,
+    }),
+    [live],
+  );
   const dividendsByIsin = useMemo(() => totalDividendsEur(cashEvents, fx), [cashEvents, fx]);
   const costsEur = useMemo(() => totalCostsEur(cashEvents, txs, fx), [cashEvents, txs, fx]);
   const otherIncomeEur = useMemo(() => totalOtherIncomeEur(cashEvents, fx), [cashEvents, fx]);
@@ -188,8 +226,8 @@ export default function Page() {
 
   const fullSeries: ValuePoint[] = useMemo(() => {
     if (positions.length === 0 || Object.keys(histByIsin).length === 0 || !live) return [];
-    return valueSeries(txs, cashEvents, histByIsin, { USDEUR: live.fxUsdEur });
-  }, [positions, txs, cashEvents, histByIsin, live]);
+    return valueSeries(txs, cashEvents, histByIsin, fx);
+  }, [positions, txs, cashEvents, histByIsin, live, fx]);
 
   const windowed = useMemo(() => {
     if (fullSeries.length === 0) return [];
@@ -248,6 +286,11 @@ export default function Page() {
       ) : null}
       {priceErr ? (
         <div className="glass p-3 text-sm text-[var(--color-negative)]">Live prices failed: {priceErr}</div>
+      ) : null}
+      {badBenchmarks.length > 0 ? (
+        <div className="glass p-3 text-sm text-[var(--color-text-secondary)]">
+          No Yahoo Finance data for: {badBenchmarks.join(", ")}. Check the ticker symbol.
+        </div>
       ) : null}
 
       <Dropzone onFile={onFile} status={status} />

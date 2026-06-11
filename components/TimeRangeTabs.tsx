@@ -1,7 +1,7 @@
 "use client";
 import type { RangeId } from "@/lib/range";
 
-const ALL: RangeId[] = ["1D","1W","MTD","1M","YTD","1Y","ALL","CUSTOM"];
+const ALL: RangeId[] = ["1D","1W","MTD","1M","YTD","1Y","ALL"];
 
 export function TimeRangeTabs({ value, onChange }: { value: RangeId; onChange: (r: RangeId) => void }) {
   return (

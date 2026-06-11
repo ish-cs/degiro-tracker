@@ -143,4 +143,31 @@ describe("extractTxsFromAccount", () => {
     ];
     expect(extractTxsFromAccount(events)).toHaveLength(0);
   });
+
+  it("collapses partial fills into a single weighted-average Tx", () => {
+    // Same order, two buy events at different prices, total 5 shares.
+    const events = [
+      mk({
+        date: "2026-01-09", orderId: "fill-1", kind: "buy",
+        description: "Buy 2 GOOGL@260 EUR (US02079K3059)",
+        currency: "EUR", amount: -520.00,
+      }),
+      mk({
+        date: "2026-01-09", orderId: "fill-1", kind: "buy",
+        description: "Buy 3 GOOGL@270 EUR (US02079K3059)",
+        currency: "EUR", amount: -810.00,
+      }),
+      mk({
+        date: "2026-01-09", orderId: "fill-1", kind: "fee",
+        description: "DEGIRO fees", currency: "EUR", amount: -3.9,
+      }),
+    ];
+    const txs = extractTxsFromAccount(events);
+    expect(txs).toHaveLength(1);
+    expect(txs[0].quantity).toBe(5);
+    // Weighted-avg price = (2*260 + 3*270) / 5 = 266
+    expect(txs[0].price).toBeCloseTo(266, 2);
+    expect(txs[0].valueEur).toBeCloseTo(1330, 2);
+    expect(txs[0].brokerFeeEur).toBeCloseTo(3.9, 2);
+  });
 });

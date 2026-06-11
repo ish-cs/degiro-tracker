@@ -125,47 +125,83 @@ export function extractTxsFromAccount(events: CashEvent[]): Tx[] {
 
   const txs: Tx[] = [];
   for (const [orderId, group] of byOrder) {
-    const trade = group.find((e) => e.kind === "buy" || e.kind === "sell");
-    if (!trade) continue;
-    const m = trade.description.match(TRADE_RE);
-    if (!m) continue;
-    const [, side, qtyStr, productName, priceStr, ccyStr, isin] = m;
-    const isBuy = side === "Buy";
-    const absQty = num(qtyStr);
+    // DEGIRO splits some orders into multiple buy/sell events (partial
+    // fills at different prices). Collapse them into one Tx weighted by
+    // share count.
+    const trades = group.filter(
+      (e) => (e.kind === "buy" || e.kind === "sell") && TRADE_RE.test(e.description),
+    );
+    if (trades.length === 0) continue;
+
+    const firstSide = trades[0].description.startsWith("Sell") ? "Sell" : "Buy";
+    let absQty = 0;
+    let weightedPrice = 0;
+    let isin = "";
+    let productName = "";
+    let localCurrency: Currency = "EUR";
+    let sumLocalAbs = 0;
+    let mixedSides = false;
+
+    for (const trade of trades) {
+      const m = trade.description.match(TRADE_RE)!;
+      const [, side, qtyStr, name, priceStr, ccyStr, parsedIsin] = m;
+      if (side !== firstSide) { mixedSides = true; continue; }
+      const q = num(qtyStr);
+      const px = num(priceStr);
+      absQty += q;
+      weightedPrice += q * px;
+      sumLocalAbs += q * px;
+      isin = parsedIsin;
+      productName = name.trim();
+      const ccy = ccyStr as Currency;
+      if (KNOWN_CCYS.has(ccy)) localCurrency = ccy;
+    }
+    if (mixedSides) continue; // unusual; skip rather than mis-classify
+    if (absQty === 0 || !isin) continue;
+
+    const price = weightedPrice / absQty;
+    const isBuy = firstSide === "Buy";
     const quantity = isBuy ? absQty : -absQty;
-    const price = num(priceStr);
-    const localCurrency = (KNOWN_CCYS.has(ccyStr as Currency) ? (ccyStr as Currency) : "EUR");
 
     let valueEur: number;
     if (localCurrency === "EUR") {
-      valueEur = Math.abs(trade.amount);
+      // Sum signed amounts of all matching-side trade events (EUR direct).
+      const eurSum = trades
+        .filter((t) => (isBuy ? t.kind === "buy" : t.kind === "sell"))
+        .reduce((s, t) => s + t.amount, 0);
+      valueEur = Math.abs(eurSum);
     } else {
-      // For buys, EUR leaves the account → "FX Debit". For sells, EUR
-      // enters → "FX Credit" in EUR.
-      const fxRow = group.find(
-        (e) => e.currency === "EUR" && (e.description === "FX Debit" || e.description === "FX Credit"),
+      // For FX trades, sum every FX Debit (for buys) or FX Credit (for sells) in EUR.
+      const fxRows = group.filter(
+        (e) =>
+          e.currency === "EUR" &&
+          (e.description === "FX Debit" || e.description === "FX Credit"),
       );
-      valueEur = fxRow ? Math.abs(fxRow.amount) : 0;
+      valueEur = Math.abs(fxRows.reduce((s, e) => s + e.amount, 0));
     }
 
-    const fee = group.find((e) => e.kind === "fee" && e.currency === "EUR");
-    const brokerFeeEur = fee ? Math.abs(fee.amount) : 0;
+    // All broker fee events tied to this order, summed.
+    const brokerFeeEur = Math.abs(
+      group
+        .filter((e) => e.kind === "fee" && e.currency === "EUR")
+        .reduce((s, e) => s + e.amount, 0),
+    );
 
     txs.push({
-      date: trade.date,
+      date: trades[0].date,
       time: "",
-      product: productName.trim(),
+      product: productName,
       isin,
       exchange: "",
       quantity,
       price,
       localCurrency,
-      valueLocal: absQty * price,
+      valueLocal: sumLocalAbs,
       valueEur,
       fxRate: null,
       feeEur: brokerFeeEur,
       brokerFeeEur,
-      autoFxFeeEur: 0, // implicit in valueEur for FX trades
+      autoFxFeeEur: 0,
       totalEur: isBuy ? -(valueEur + brokerFeeEur) : (valueEur - brokerFeeEur),
       orderId,
     });
