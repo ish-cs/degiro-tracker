@@ -16,6 +16,24 @@ export function totalDividendsEur(events: CashEvent[]): Record<string, number> {
   return acc;
 }
 
+// Income that isn't tied to a specific ISIN — broker rebates, interest, etc.
+// Counted toward income return at the portfolio level.
+export function totalOtherIncomeEur(events: CashEvent[]): number {
+  let sum = 0;
+  for (const e of events) {
+    const d = e.description.toLowerCase();
+    if (
+      d.includes("rebate") ||
+      d.includes("interest") ||
+      d.includes("promotion") ||
+      d.includes("cashback")
+    ) {
+      sum += e.amountEur;
+    }
+  }
+  return sum;
+}
+
 export function cashBalanceEur(events: CashEvent[]): number {
   // Use latest reported balance from broker, not sum of changes.
   // Summing double-counts internal sweep transfers and FX pair events.

@@ -72,7 +72,8 @@ export type Returns = {
   incomeReturnEur: number;
   incomeReturnPct: number;
   totalReturnEur: number;
-  totalReturnPct: number;
+  totalReturnPct: number;        // money-weighted (Modified Dietz)
+  totalReturnPctSimple: number;  // simple cost-basis return
   costRatioPct: number;
 };
 

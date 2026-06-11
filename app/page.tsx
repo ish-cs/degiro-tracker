@@ -4,7 +4,7 @@ import { parseTransactionsCsv } from "@/lib/parsers/transactions";
 import { parseAccountCsv } from "@/lib/parsers/account";
 import { currentPositions } from "@/lib/portfolio/positions";
 import { computeReturns } from "@/lib/portfolio/returns";
-import { totalFeesEur, totalDividendsEur, cashBalanceEur } from "@/lib/portfolio/cost-ratio";
+import { totalFeesEur, totalDividendsEur, cashBalanceEur, totalOtherIncomeEur } from "@/lib/portfolio/cost-ratio";
 import { Dropzone } from "@/components/Dropzone";
 import { KPIRow } from "@/components/KPIRow";
 import { Holdings, type HoldingRow } from "@/components/Holdings";
@@ -114,18 +114,21 @@ export default function Page() {
   const ready = txs.length > 0 && live;
   const dividendsByIsin = useMemo(() => totalDividendsEur(cashEvents), [cashEvents]);
   const feesEur = useMemo(() => totalFeesEur(cashEvents), [cashEvents]);
+  const otherIncomeEur = useMemo(() => totalOtherIncomeEur(cashEvents), [cashEvents]);
 
   const returns = useMemo(() => {
     if (!ready) return null;
-    return computeReturns(positions, dividendsByIsin, live!.prices, feesEur);
-  }, [ready, positions, dividendsByIsin, feesEur, live]);
+    return computeReturns(positions, dividendsByIsin, live!.prices, feesEur, otherIncomeEur, txs);
+  }, [ready, positions, dividendsByIsin, feesEur, otherIncomeEur, live, txs]);
 
   const rows: HoldingRow[] = useMemo(() => {
     if (!returns || !live) return [];
     const total = returns.currentValueEur;
     return positions.map((p) => {
       const px = live.prices[p.isin];
-      const valueEur = p.quantity * (px?.priceEur ?? p.bep);
+      const bepEur = p.quantity ? p.costBasisEur / p.quantity : 0;
+      const currentEur = px?.priceEur ?? bepEur;
+      const valueEur = p.quantity * currentEur;
       const dividends = dividendsByIsin[p.isin] ?? 0;
       const priceReturnPct = p.costBasisEur ? (valueEur - p.costBasisEur) / p.costBasisEur : 0;
       const incomeReturnPct = p.costBasisEur ? dividends / p.costBasisEur : 0;
@@ -133,8 +136,8 @@ export default function Page() {
         isin: p.isin,
         name: p.product,
         qty: p.quantity,
-        bep: p.bep,
-        current: px?.raw ?? 0,
+        bep: bepEur,
+        current: currentEur,
         currency: p.currency,
         valueEur,
         priceReturnPct,
