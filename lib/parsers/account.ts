@@ -104,10 +104,15 @@ export function parseAccountCsv(text: string): CashEvent[] {
 }
 
 // Extract per-trade transactions purely from Account.csv. Groups events by
-// orderId and parses the canonical "Buy N Product@Price CCY (ISIN)" pattern.
-// EUR buys → cost = buy event EUR amount. USD/foreign buys → cost = FX Debit
-// EUR amount (which already includes the AutoFX spread the broker charges).
-const BUY_RE = /^Buy\s+(\d+(?:[.,]\d+)?)\s+(.+?)@([\d.,]+)\s+([A-Z]{3})\s+\(([A-Z0-9]+)\)/;
+// orderId and parses the canonical "Buy N Product@Price CCY (ISIN)" pattern
+// (and the matching "Sell N Product@Price CCY (ISIN)" pattern).
+//
+// EUR trades → cost/proceeds = buy/sell event EUR amount.
+// USD/foreign trades → cost = FX Debit (buy) / FX Credit (sell) EUR amount,
+//   which already includes the AutoFX spread the broker charges.
+const TRADE_RE = /^(Buy|Sell)\s+(\d+(?:[.,]\d+)?)\s+(.+?)@([\d.,]+)\s+([A-Z]{3})\s+\(([A-Z0-9]+)\)/;
+
+const KNOWN_CCYS = new Set<Currency>(["EUR", "USD", "GBP", "CHF", "JPY"]);
 
 export function extractTxsFromAccount(events: CashEvent[]): Tx[] {
   const byOrder = new Map<string, CashEvent[]>();
@@ -120,28 +125,34 @@ export function extractTxsFromAccount(events: CashEvent[]): Tx[] {
 
   const txs: Tx[] = [];
   for (const [orderId, group] of byOrder) {
-    const buy = group.find((e) => e.kind === "buy");
-    if (!buy) continue;
-    const m = buy.description.match(BUY_RE);
+    const trade = group.find((e) => e.kind === "buy" || e.kind === "sell");
+    if (!trade) continue;
+    const m = trade.description.match(TRADE_RE);
     if (!m) continue;
-    const [, qtyStr, productName, priceStr, ccyStr, isin] = m;
-    const quantity = num(qtyStr);
+    const [, side, qtyStr, productName, priceStr, ccyStr, isin] = m;
+    const isBuy = side === "Buy";
+    const absQty = num(qtyStr);
+    const quantity = isBuy ? absQty : -absQty;
     const price = num(priceStr);
-    const localCurrency = ccyStr as Currency;
+    const localCurrency = (KNOWN_CCYS.has(ccyStr as Currency) ? (ccyStr as Currency) : "EUR");
 
     let valueEur: number;
     if (localCurrency === "EUR") {
-      valueEur = Math.abs(buy.amount); // buy event itself is EUR
+      valueEur = Math.abs(trade.amount);
     } else {
-      const fxDebit = group.find((e) => e.description === "FX Debit" && e.currency === "EUR");
-      valueEur = fxDebit ? Math.abs(fxDebit.amount) : 0;
+      // For buys, EUR leaves the account → "FX Debit". For sells, EUR
+      // enters → "FX Credit" in EUR.
+      const fxRow = group.find(
+        (e) => e.currency === "EUR" && (e.description === "FX Debit" || e.description === "FX Credit"),
+      );
+      valueEur = fxRow ? Math.abs(fxRow.amount) : 0;
     }
 
     const fee = group.find((e) => e.kind === "fee" && e.currency === "EUR");
     const brokerFeeEur = fee ? Math.abs(fee.amount) : 0;
 
     txs.push({
-      date: buy.date,
+      date: trade.date,
       time: "",
       product: productName.trim(),
       isin,
@@ -149,13 +160,13 @@ export function extractTxsFromAccount(events: CashEvent[]): Tx[] {
       quantity,
       price,
       localCurrency,
-      valueLocal: quantity * price,
+      valueLocal: absQty * price,
       valueEur,
       fxRate: null,
       feeEur: brokerFeeEur,
       brokerFeeEur,
-      autoFxFeeEur: 0, // implicit in valueEur for FX buys
-      totalEur: -(valueEur + brokerFeeEur),
+      autoFxFeeEur: 0, // implicit in valueEur for FX trades
+      totalEur: isBuy ? -(valueEur + brokerFeeEur) : (valueEur - brokerFeeEur),
       orderId,
     });
   }

@@ -16,7 +16,12 @@ export type BenchmarkSelection = { id: string; label: string; symbol: string }[]
 export function BenchmarkSelector({ value, onChange }: { value: BenchmarkSelection; onChange: (v: BenchmarkSelection) => void }) {
   const [customSym, setCustomSym] = useState("");
 
-  useEffect(() => { localStorage.setItem(LS_KEY, JSON.stringify(value)); }, [value]);
+  // Persist on change. Skip the initial empty value the parent passes
+  // before hydration so we don't clobber saved selection with [].
+  useEffect(() => {
+    if (value.length === 0) return;
+    localStorage.setItem(LS_KEY, JSON.stringify(value));
+  }, [value]);
 
   const togglePreset = (b: typeof PRESETS[number]) => {
     const exists = value.find((v) => v.id === b.id);
@@ -74,10 +79,15 @@ export function BenchmarkSelector({ value, onChange }: { value: BenchmarkSelecti
 }
 
 export function loadSavedBenchmarks(): BenchmarkSelection {
-  if (typeof window === "undefined") return [PRESETS[0]];
+  // SSR / first paint: render with no benchmarks. The selector mounts
+  // empty, then the parent's useState initializer rehydrates on the
+  // client. This avoids the SSR/CSR mismatch from reading window during
+  // server render.
+  if (typeof window === "undefined") return [];
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (!raw) return [PRESETS[0]];
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [PRESETS[0]];
   } catch { return [PRESETS[0]]; }
 }

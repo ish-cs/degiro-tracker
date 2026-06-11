@@ -22,40 +22,73 @@ type LiveData = {
 };
 
 const LS_KEY = "degiro-tracker:v2";
+const LEGACY_LS_KEYS = ["degiro-tracker:v1"];
+
+function loadFromLocalStorage(): CashEvent[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (Array.isArray(s.cashEvents)) return s.cashEvents;
+    }
+    // Migrate from any prior key. Old v1 stored {txs, cashEvents}, ignore
+    // the txs side since we derive them now.
+    for (const k of LEGACY_LS_KEYS) {
+      const r = localStorage.getItem(k);
+      if (!r) continue;
+      const s = JSON.parse(r);
+      if (Array.isArray(s.cashEvents)) {
+        localStorage.removeItem(k);
+        return s.cashEvents;
+      }
+    }
+  } catch {}
+  return [];
+}
 
 export default function Page() {
+  // We always render the empty shell server-side, then swap in any saved
+  // state once mounted. `mounted` is what unblocks client-only UI.
+  const [mounted, setMounted] = useState(false);
   const [cashEvents, setCashEvents] = useState<CashEvent[]>([]);
-  const [status, setStatus] = useState<"idle"|"ready"|"error">("idle");
+  const [parseStatus, setParseStatus] = useState<"idle"|"ready"|"error">("idle");
+  const status: "idle"|"ready"|"error" =
+    parseStatus !== "idle" ? parseStatus : (cashEvents.length > 0 ? "ready" : "idle");
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [live, setLive] = useState<LiveData | null>(null);
-  const [err, setErr] = useState<string | null>(null);
+  const [priceErr, setPriceErr] = useState<string | null>(null);
   const [range, setRange] = useState<RangeId>("YTD");
   const [mode, setMode] = useState<"value" | "pl">("value");
-  const [benchmarks, setBenchmarks] = useState<BenchmarkSelection>(() => loadSavedBenchmarks());
+  const [benchmarks, setBenchmarks] = useState<BenchmarkSelection>([]);
   const [histByIsin, setHistByIsin] = useState<Record<string, { t: number; close: number }[]>>({});
   const [benchSeries, setBenchSeries] = useState<BenchmarkSeries[]>([]);
 
+  // Effect intentionally hydrates state from localStorage post-mount.
+  // The source of truth (browser storage) doesn't exist on the server,
+  // so there's nothing to "derive" — setState in effect is the right shape.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    const raw = typeof window !== "undefined" ? localStorage.getItem(LS_KEY) : null;
-    if (!raw) return;
-    try {
-      const s = JSON.parse(raw);
-      setCashEvents(s.cashEvents ?? []);
-      setStatus(s.cashEvents?.length ? "ready" : "idle");
-    } catch {}
+    setCashEvents(loadFromLocalStorage());
+    setBenchmarks(loadSavedBenchmarks());
+    setMounted(true);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   useEffect(() => {
+    if (!mounted) return;
     if (cashEvents.length) {
       localStorage.setItem(LS_KEY, JSON.stringify({ cashEvents, savedAt: Date.now() }));
     }
-  }, [cashEvents]);
+  }, [cashEvents, mounted]);
 
   // Derive Tx[] from cash events. Single source of truth.
   const txs = useMemo(() => extractTxsFromAccount(cashEvents), [cashEvents]);
   const positions = useMemo(() => currentPositions(txs), [txs]);
 
   useEffect(() => {
-    if (positions.length === 0) { setLive(null); return; }
+    if (positions.length === 0) return;
+    let cancelled = false;
     const symbols = positions.map((p) => p.yahooSymbol);
     (async () => {
       try {
@@ -63,6 +96,7 @@ export default function Page() {
           fetch(`/api/price?symbols=${symbols.join(",")}`).then((r) => r.json()),
           fetch(`/api/fx?pair=USDEUR`).then((r) => r.json()),
         ]);
+        if (cancelled) return;
         const fxUsdEur = fxRes.price ?? 1;
         const prices: LiveData["prices"] = {};
         for (const p of positions) {
@@ -74,37 +108,42 @@ export default function Page() {
           prices[p.isin] = { priceEur: eur, currency: q.currency, raw: q.price };
         }
         setLive({ prices, fxUsdEur });
-        setErr(null);
+        setPriceErr(null);
       } catch (e) {
-        setErr(e instanceof Error ? e.message : "price fetch failed");
+        if (!cancelled) setPriceErr(e instanceof Error ? e.message : "price fetch failed");
       }
     })();
+    return () => { cancelled = true; };
   }, [positions]);
 
   useEffect(() => {
-    if (positions.length === 0) { setHistByIsin({}); return; }
+    if (positions.length === 0) return;
+    let cancelled = false;
     (async () => {
       try {
         const entries = await Promise.all(positions.map(async (p) => {
           const r = await fetch(`/api/history?symbol=${encodeURIComponent(p.yahooSymbol)}&range=5y`).then((r) => r.json());
           return [p.isin, r.points ?? []] as const;
         }));
-        setHistByIsin(Object.fromEntries(entries));
+        if (!cancelled) setHistByIsin(Object.fromEntries(entries));
       } catch {}
     })();
+    return () => { cancelled = true; };
   }, [positions]);
 
   useEffect(() => {
-    if (benchmarks.length === 0) { setBenchSeries([]); return; }
+    if (benchmarks.length === 0) return;
+    let cancelled = false;
     (async () => {
       try {
         const series = await Promise.all(benchmarks.map(async (b) => {
           const r = await fetch(`/api/history?symbol=${encodeURIComponent(b.symbol)}&range=5y`).then((r) => r.json());
           return { id: b.id, label: b.label, symbol: b.symbol, points: r.points ?? [] };
         }));
-        setBenchSeries(series);
+        if (!cancelled) setBenchSeries(series);
       } catch {}
     })();
+    return () => { cancelled = true; };
   }, [benchmarks]);
 
   const ready = txs.length > 0 && live;
@@ -168,31 +207,47 @@ export default function Page() {
   const onFile = async (text: string) => {
     try {
       const events = parseAccountCsv(text);
-      if (events.length === 0) throw new Error("empty");
+      if (events.length === 0) {
+        setErrorMsg("That doesn't look like a DEGIRO Account.csv. Make sure you exported Account → Activity → Export → Account (not Transactions).");
+        setParseStatus("error");
+        return;
+      }
       setCashEvents(events);
-      setStatus("ready");
-    } catch {
-      setStatus("error");
+      setParseStatus("ready");
+      setErrorMsg(null);
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : "Couldn't parse the file.");
+      setParseStatus("error");
     }
   };
 
   const reset = () => {
-    localStorage.removeItem(LS_KEY);
-    setCashEvents([]); setLive(null);
-    setStatus("idle");
+    if (typeof window !== "undefined") {
+      localStorage.removeItem(LS_KEY);
+      for (const k of LEGACY_LS_KEYS) localStorage.removeItem(k);
+    }
+    setCashEvents([]); setLive(null); setHistByIsin({}); setBenchSeries([]);
+    setParseStatus("idle");
+    setErrorMsg(null);
+    setPriceErr(null);
   };
+
+  const showReset = mounted && (cashEvents.length > 0 || parseStatus !== "idle");
 
   return (
     <main className="min-h-screen p-6 md:p-10 flex flex-col gap-6 max-w-7xl mx-auto">
       <header className="flex items-center justify-between">
         <h1 className="text-2xl font-medium tracking-tight">DEGIRO Tracker</h1>
-        {ready ? (
+        {showReset ? (
           <button onClick={reset} className="text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]">clear data</button>
         ) : null}
       </header>
 
-      {err ? (
-        <div className="glass p-3 text-sm text-[var(--color-negative)]">{err}</div>
+      {errorMsg ? (
+        <div className="glass p-3 text-sm text-[var(--color-negative)]">{errorMsg}</div>
+      ) : null}
+      {priceErr ? (
+        <div className="glass p-3 text-sm text-[var(--color-negative)]">Live prices failed: {priceErr}</div>
       ) : null}
 
       <Dropzone onFile={onFile} status={status} />
