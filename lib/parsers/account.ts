@@ -1,5 +1,5 @@
 import Papa from "papaparse";
-import type { CashEvent, CashEventKind } from "@/lib/types";
+import type { CashEvent, CashEventKind, Tx, Currency } from "@/lib/types";
 
 const parseEuropeanDate = (raw: string): string => {
   const [dd, mm, yyyy] = raw.split("-");
@@ -29,11 +29,6 @@ function classify(description: string): CashEventKind {
 const looksLikeCurrencyCode = (s: string) => /^[A-Z]{3}$/.test((s || "").trim());
 
 export function parseAccountCsv(text: string): CashEvent[] {
-  // DEGIRO real export uses currency-code columns BEFORE the numeric amounts:
-  //   Description, FX, [ChangeCcy], Change, [BalanceCcy], Balance, Order Id
-  // ...but mislabels the currency column as "Change" / "Balance" in the header.
-  // Detect by checking if the first row's "Change" parses as a currency code.
-
   const { data } = Papa.parse<Record<string, string>>(text, {
     header: true,
     skipEmptyLines: true,
@@ -41,22 +36,33 @@ export function parseAccountCsv(text: string): CashEvent[] {
   if (data.length === 0) return [];
 
   const sample = data[0];
-  const changeIsCurrency = looksLikeCurrencyCode(sample["Change"]) || (!sample["Change"] && sample[""] !== undefined);
+  const changeIsCurrency =
+    looksLikeCurrencyCode(sample["Change"]) ||
+    (!sample["Change"] && sample[""] !== undefined);
 
   if (!changeIsCurrency) {
-    // Old/fixture format — Change is numeric.
+    // Legacy/fixture format — Change is numeric, all EUR.
     return data
       .filter((row) => row["Date"] && row["Description"])
-      .map((row) => ({
-        date: parseEuropeanDate(row["Date"]),
-        product: row["Product"] ?? "",
-        isin: row["ISIN"] || null,
-        description: row["Description"],
-        kind: classify(row["Description"]),
-        amountEur: num(row["Change"]),
-        balanceEur: num(row["Balance"]),
-        orderId: row["Order ID"] || row["Order Id"] || null,
-      }));
+      .map((row) => {
+        const amt = num(row["Change"]);
+        const bal = num(row["Balance"]);
+        return {
+          date: parseEuropeanDate(row["Date"]),
+          product: row["Product"] ?? "",
+          isin: row["ISIN"] || null,
+          description: row["Description"],
+          kind: classify(row["Description"]),
+          currency: "EUR",
+          amount: amt,
+          amountEur: amt,
+          balanceCurrency: "EUR",
+          balance: bal,
+          balanceEur: bal,
+          orderId: row["Order ID"] || row["Order Id"] || null,
+          fxRate: num(row["FX"]) || null,
+        };
+      });
   }
 
   // Real DEGIRO format — re-parse without header so we can read by column index.
@@ -66,25 +72,92 @@ export function parseAccountCsv(text: string): CashEvent[] {
   const idxProduct = headers.indexOf("Product");
   const idxIsin = headers.indexOf("ISIN");
   const idxDesc = headers.indexOf("Description");
+  const idxFx = headers.indexOf("FX");
   const idxOrder = headers.findIndex((h) => h === "Order ID" || h === "Order Id");
-  const idxChange = headers.indexOf("Change");
-  const idxBalance = headers.indexOf("Balance");
+  const idxChange = headers.indexOf("Change");     // currency code column
+  const idxBalance = headers.indexOf("Balance");   // currency code column
 
   return rows.slice(1)
     .filter((r) => r[idxDate] && r[idxDesc])
     .map((r) => {
-      const amountStr = r[idxChange + 1] ?? "";
-      const balanceStr = r[idxBalance + 1] ?? "";
       const desc = r[idxDesc];
+      const currency = (r[idxChange] || "EUR").trim();
+      const balanceCurrency = (r[idxBalance] || "EUR").trim();
+      const amount = num(r[idxChange + 1] ?? "");
+      const balance = num(r[idxBalance + 1] ?? "");
       return {
         date: parseEuropeanDate(r[idxDate]),
         product: r[idxProduct] ?? "",
         isin: r[idxIsin] || null,
         description: desc,
         kind: classify(desc),
-        amountEur: num(amountStr),
-        balanceEur: num(balanceStr),
+        currency,
+        amount,
+        amountEur: currency === "EUR" ? amount : 0,
+        balanceCurrency,
+        balance,
+        balanceEur: balanceCurrency === "EUR" ? balance : 0,
         orderId: idxOrder >= 0 ? (r[idxOrder] || null) : null,
+        fxRate: idxFx >= 0 ? (num(r[idxFx]) || null) : null,
       };
     });
+}
+
+// Extract per-trade transactions purely from Account.csv. Groups events by
+// orderId and parses the canonical "Buy N Product@Price CCY (ISIN)" pattern.
+// EUR buys → cost = buy event EUR amount. USD/foreign buys → cost = FX Debit
+// EUR amount (which already includes the AutoFX spread the broker charges).
+const BUY_RE = /^Buy\s+(\d+(?:[.,]\d+)?)\s+(.+?)@([\d.,]+)\s+([A-Z]{3})\s+\(([A-Z0-9]+)\)/;
+
+export function extractTxsFromAccount(events: CashEvent[]): Tx[] {
+  const byOrder = new Map<string, CashEvent[]>();
+  for (const e of events) {
+    if (!e.orderId) continue;
+    const list = byOrder.get(e.orderId) ?? [];
+    list.push(e);
+    byOrder.set(e.orderId, list);
+  }
+
+  const txs: Tx[] = [];
+  for (const [orderId, group] of byOrder) {
+    const buy = group.find((e) => e.kind === "buy");
+    if (!buy) continue;
+    const m = buy.description.match(BUY_RE);
+    if (!m) continue;
+    const [, qtyStr, productName, priceStr, ccyStr, isin] = m;
+    const quantity = num(qtyStr);
+    const price = num(priceStr);
+    const localCurrency = ccyStr as Currency;
+
+    let valueEur: number;
+    if (localCurrency === "EUR") {
+      valueEur = Math.abs(buy.amount); // buy event itself is EUR
+    } else {
+      const fxDebit = group.find((e) => e.description === "FX Debit" && e.currency === "EUR");
+      valueEur = fxDebit ? Math.abs(fxDebit.amount) : 0;
+    }
+
+    const fee = group.find((e) => e.kind === "fee" && e.currency === "EUR");
+    const brokerFeeEur = fee ? Math.abs(fee.amount) : 0;
+
+    txs.push({
+      date: buy.date,
+      time: "",
+      product: productName.trim(),
+      isin,
+      exchange: "",
+      quantity,
+      price,
+      localCurrency,
+      valueLocal: quantity * price,
+      valueEur,
+      fxRate: null,
+      feeEur: brokerFeeEur,
+      brokerFeeEur,
+      autoFxFeeEur: 0, // implicit in valueEur for FX buys
+      totalEur: -(valueEur + brokerFeeEur),
+      orderId,
+    });
+  }
+  return txs.sort((a, b) => a.date.localeCompare(b.date));
 }

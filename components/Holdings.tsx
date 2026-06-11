@@ -4,10 +4,16 @@ import { GlassCard } from "./GlassCard";
 import { fmtEur, fmtNum, fmtPct, signCls } from "@/lib/format";
 
 export type HoldingRow = {
-  isin: string; name: string; qty: number; bep: number;
-  current: number; currency: string;
-  valueEur: number; priceReturnPct: number;
-  incomeReturnPct: number; totalReturnPct: number; allocPct: number;
+  isin: string;
+  name: string;
+  qty: number;
+  bep: number;          // EUR per share
+  current: number;      // EUR per share
+  valueEur: number;
+  priceReturnPct: number;
+  incomeReturnPct: number;
+  totalReturnPct: number;
+  allocPct: number;
 };
 
 export function Holdings({ rows }: { rows: HoldingRow[] }) {
@@ -33,14 +39,13 @@ export function Holdings({ rows }: { rows: HoldingRow[] }) {
           <tr>
             {hd("name", "Name")}
             {hd("qty", "Qty")}
-            {hd("bep", "BEP")}
-            {hd("current", "Current")}
+            {hd("bep", "BEP €/sh")}
+            {hd("current", "Current €/sh")}
             {hd("valueEur", "Value")}
             {hd("priceReturnPct", "Price %")}
             {hd("incomeReturnPct", "Income %")}
             {hd("totalReturnPct", "Total %")}
             {hd("allocPct", "% Book")}
-            {hd("currency", "Curr")}
           </tr>
         </thead>
         <tbody>
@@ -48,14 +53,13 @@ export function Holdings({ rows }: { rows: HoldingRow[] }) {
             <tr key={r.isin} className="border-t border-[var(--color-glass-border)] hover:bg-white/[0.03]">
               <td className="px-3 py-2">{r.name}</td>
               <td className="px-3 py-2 mono tabular">{fmtNum(r.qty, 0)}</td>
-              <td className="px-3 py-2 mono tabular">{fmtNum(r.bep, 2)}</td>
-              <td className="px-3 py-2 mono tabular">{fmtNum(r.current, 2)}</td>
+              <td className="px-3 py-2 mono tabular">{fmtEur(r.bep)}</td>
+              <td className="px-3 py-2 mono tabular">{fmtEur(r.current)}</td>
               <td className="px-3 py-2 mono tabular">{fmtEur(r.valueEur)}</td>
               <td className={`px-3 py-2 mono tabular ${signCls(r.priceReturnPct)}`}>{fmtPct(r.priceReturnPct)}</td>
               <td className={`px-3 py-2 mono tabular ${signCls(r.incomeReturnPct)}`}>{fmtPct(r.incomeReturnPct)}</td>
               <td className={`px-3 py-2 mono tabular ${signCls(r.totalReturnPct)}`}>{fmtPct(r.totalReturnPct)}</td>
               <td className="px-3 py-2 mono tabular">{fmtPct(r.allocPct)}</td>
-              <td className="px-3 py-2 text-[var(--color-text-secondary)]">{r.currency}</td>
             </tr>
           ))}
         </tbody>

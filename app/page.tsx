@@ -1,10 +1,9 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { parseTransactionsCsv } from "@/lib/parsers/transactions";
-import { parseAccountCsv } from "@/lib/parsers/account";
+import { parseAccountCsv, extractTxsFromAccount } from "@/lib/parsers/account";
 import { currentPositions } from "@/lib/portfolio/positions";
 import { computeReturns } from "@/lib/portfolio/returns";
-import { totalFeesEur, totalDividendsEur, cashBalanceEur, totalOtherIncomeEur } from "@/lib/portfolio/cost-ratio";
+import { totalCostsEur, totalDividendsEur, cashBalanceEur, totalOtherIncomeEur } from "@/lib/portfolio/cost-ratio";
 import { Dropzone } from "@/components/Dropzone";
 import { KPIRow } from "@/components/KPIRow";
 import { Holdings, type HoldingRow } from "@/components/Holdings";
@@ -15,20 +14,18 @@ import { TimeRangeTabs } from "@/components/TimeRangeTabs";
 import { BenchmarkSelector, loadSavedBenchmarks, type BenchmarkSelection } from "@/components/BenchmarkSelector";
 import { valueSeries } from "@/lib/portfolio/value-series";
 import { rangeBounds, type RangeId } from "@/lib/range";
-import type { Tx, CashEvent, ValuePoint, BenchmarkSeries } from "@/lib/types";
+import type { CashEvent, ValuePoint, BenchmarkSeries } from "@/lib/types";
 
-type SlotStatus = { transactions: "idle"|"ready"|"error"; account: "idle"|"ready"|"error" };
 type LiveData = {
   prices: Record<string, { priceEur: number; currency: string; raw: number }>;
   fxUsdEur: number;
 };
 
-const LS_KEY = "degiro-tracker:v1";
+const LS_KEY = "degiro-tracker:v2";
 
 export default function Page() {
-  const [txs, setTxs] = useState<Tx[]>([]);
   const [cashEvents, setCashEvents] = useState<CashEvent[]>([]);
-  const [status, setStatus] = useState<SlotStatus>({ transactions: "idle", account: "idle" });
+  const [status, setStatus] = useState<"idle"|"ready"|"error">("idle");
   const [live, setLive] = useState<LiveData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [range, setRange] = useState<RangeId>("YTD");
@@ -42,20 +39,19 @@ export default function Page() {
     if (!raw) return;
     try {
       const s = JSON.parse(raw);
-      setTxs(s.txs ?? []); setCashEvents(s.cashEvents ?? []);
-      setStatus({
-        transactions: s.txs?.length ? "ready" : "idle",
-        account: s.cashEvents?.length ? "ready" : "idle",
-      });
+      setCashEvents(s.cashEvents ?? []);
+      setStatus(s.cashEvents?.length ? "ready" : "idle");
     } catch {}
   }, []);
 
   useEffect(() => {
-    if (txs.length || cashEvents.length) {
-      localStorage.setItem(LS_KEY, JSON.stringify({ txs, cashEvents, savedAt: Date.now() }));
+    if (cashEvents.length) {
+      localStorage.setItem(LS_KEY, JSON.stringify({ cashEvents, savedAt: Date.now() }));
     }
-  }, [txs, cashEvents]);
+  }, [cashEvents]);
 
+  // Derive Tx[] from cash events. Single source of truth.
+  const txs = useMemo(() => extractTxsFromAccount(cashEvents), [cashEvents]);
   const positions = useMemo(() => currentPositions(txs), [txs]);
 
   useEffect(() => {
@@ -112,22 +108,22 @@ export default function Page() {
   }, [benchmarks]);
 
   const ready = txs.length > 0 && live;
-  const dividendsByIsin = useMemo(() => totalDividendsEur(cashEvents), [cashEvents]);
-  const feesEur = useMemo(() => totalFeesEur(cashEvents), [cashEvents]);
-  const otherIncomeEur = useMemo(() => totalOtherIncomeEur(cashEvents), [cashEvents]);
+  const fx = useMemo(() => ({ USDEUR: live?.fxUsdEur ?? 1 }), [live]);
+  const dividendsByIsin = useMemo(() => totalDividendsEur(cashEvents, fx), [cashEvents, fx]);
+  const costsEur = useMemo(() => totalCostsEur(cashEvents, txs, fx), [cashEvents, txs, fx]);
+  const otherIncomeEur = useMemo(() => totalOtherIncomeEur(cashEvents, fx), [cashEvents, fx]);
 
   const returns = useMemo(() => {
     if (!ready) return null;
-    return computeReturns(positions, dividendsByIsin, live!.prices, feesEur, otherIncomeEur, txs);
-  }, [ready, positions, dividendsByIsin, feesEur, otherIncomeEur, live, txs]);
+    return computeReturns(positions, dividendsByIsin, live!.prices, costsEur, otherIncomeEur, txs);
+  }, [ready, positions, dividendsByIsin, costsEur, otherIncomeEur, live, txs]);
 
   const rows: HoldingRow[] = useMemo(() => {
     if (!returns || !live) return [];
     const total = returns.currentValueEur;
     return positions.map((p) => {
       const px = live.prices[p.isin];
-      const bepEur = p.quantity ? p.costBasisEur / p.quantity : 0;
-      const currentEur = px?.priceEur ?? bepEur;
+      const currentEur = px?.priceEur ?? p.bep;
       const valueEur = p.quantity * currentEur;
       const dividends = dividendsByIsin[p.isin] ?? 0;
       const priceReturnPct = p.costBasisEur ? (valueEur - p.costBasisEur) / p.costBasisEur : 0;
@@ -136,9 +132,8 @@ export default function Page() {
         isin: p.isin,
         name: p.product,
         qty: p.quantity,
-        bep: bepEur,
+        bep: p.bep,
         current: currentEur,
-        currency: p.currency,
         valueEur,
         priceReturnPct,
         incomeReturnPct,
@@ -170,20 +165,21 @@ export default function Page() {
     return benchSeries.map((b) => ({ ...b, points: b.points.filter((p) => p.t >= fromTs && p.t <= toTs) }));
   }, [benchSeries, windowed]);
 
-  const onFile = async (slot: keyof SlotStatus, text: string) => {
+  const onFile = async (text: string) => {
     try {
-      if (slot === "transactions") setTxs(parseTransactionsCsv(text));
-      else setCashEvents(parseAccountCsv(text));
-      setStatus((s) => ({ ...s, [slot]: "ready" }));
+      const events = parseAccountCsv(text);
+      if (events.length === 0) throw new Error("empty");
+      setCashEvents(events);
+      setStatus("ready");
     } catch {
-      setStatus((s) => ({ ...s, [slot]: "error" }));
+      setStatus("error");
     }
   };
 
   const reset = () => {
     localStorage.removeItem(LS_KEY);
-    setTxs([]); setCashEvents([]); setLive(null);
-    setStatus({ transactions: "idle", account: "idle" });
+    setCashEvents([]); setLive(null);
+    setStatus("idle");
   };
 
   return (

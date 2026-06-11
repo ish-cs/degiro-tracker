@@ -42,9 +42,9 @@ export function parseTransactionsCsv(text: string): Tx[] {
       const localCurrency = exchangeCurrency[exchange] ?? "EUR";
       const qty = num(pick(row, "Quantity"));
       const fxRate = num(pick(row, "Exchange rate")) || 1.0;
-      const autoFxFee = Math.abs(num(pick(row, "AutoFX Fee")));
-      const txFee = Math.abs(num(pick(row, "Transaction and/or third party fees EUR", "Fee")));
-      const feeEur = autoFxFee + txFee;
+      const autoFxFeeEur = Math.abs(num(pick(row, "AutoFX Fee")));
+      const brokerFeeEur = Math.abs(num(pick(row, "Transaction and/or third party fees EUR", "Fee")));
+      const feeEur = autoFxFeeEur + brokerFeeEur;
 
       return {
         date: parseEuropeanDate(row["Date"]),
@@ -59,6 +59,8 @@ export function parseTransactionsCsv(text: string): Tx[] {
         valueEur: Math.abs(num(pick(row, "Value EUR", "Value"))),
         fxRate,
         feeEur,
+        brokerFeeEur,
+        autoFxFeeEur,
         totalEur: num(pick(row, "Total EUR", "Total")),
         orderId: pick(row, "Order ID", "Order Id"),
       } as Tx;

@@ -8,7 +8,7 @@ export function KPIRow({ r, cashEur }: { r: Returns; cashEur: number }) {
     { label: "Total Return", value: fmtEur(r.totalReturnEur), sub: fmtPct(r.totalReturnPct), cls: signCls(r.totalReturnEur) },
     { label: "Price Return", value: fmtPct(r.priceReturnPct), sub: fmtEur(r.priceReturnEur), cls: signCls(r.priceReturnEur) },
     { label: "Income Return", value: fmtPct(r.incomeReturnPct), sub: fmtEur(r.incomeReturnEur), cls: signCls(r.incomeReturnEur) },
-    { label: "Cost Ratio", value: fmtPct(r.costRatioPct), sub: "fees / cost basis", cls: "text-[var(--color-text-secondary)]" },
+    { label: "Cost Ratio", value: fmtPct(r.costRatioPct), sub: "brokerage + FX + taxes / cost", cls: signCls(r.costRatioPct) },
   ];
   return (
     <div className="grid grid-cols-2 md:grid-cols-5 gap-4">

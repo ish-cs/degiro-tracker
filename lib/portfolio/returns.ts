@@ -5,7 +5,7 @@ export function computeReturns(
   positions: Position[],
   dividendsByIsin: Record<string, number>,
   pricesByIsin: Record<string, { priceEur: number; currency: string }>,
-  totalFeesEur: number,
+  totalCostsEur: number,
   otherIncomeEur: number = 0,
   txs: Tx[] = [],
   endIso: string = new Date().toISOString().slice(0, 10),
@@ -43,6 +43,7 @@ export function computeReturns(
     totalReturnEur,
     totalReturnPct: mwPct,
     totalReturnPctSimple: simplePct,
-    costRatioPct: cost ? totalFeesEur / cost : 0,
+    // Negative — costs reduce return. Matches Simple Portfolio convention.
+    costRatioPct: cost ? -totalCostsEur / cost : 0,
   };
 }

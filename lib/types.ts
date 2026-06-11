@@ -12,7 +12,9 @@ export type Tx = {
   valueLocal: number;
   valueEur: number;
   fxRate: number | null;
-  feeEur: number;
+  feeEur: number;        // total of brokerage + AutoFX (sum for cost basis)
+  brokerFeeEur: number;  // transaction fee only
+  autoFxFeeEur: number;  // currency conversion cost only
   totalEur: number;
   orderId: string;
 };
@@ -34,9 +36,14 @@ export type CashEvent = {
   isin: string | null;
   description: string;
   kind: CashEventKind;
-  amountEur: number;
+  currency: string;       // currency of `amount` (e.g. "EUR", "USD")
+  amount: number;         // signed, in `currency`
+  amountEur: number;      // EUR-denominated only (0 for non-EUR events)
+  balanceCurrency: string;
+  balance: number;
   balanceEur: number;
   orderId: string | null;
+  fxRate: number | null;  // if event has explicit FX rate (FX Credit/Debit)
 };
 
 export type Position = {
@@ -44,10 +51,9 @@ export type Position = {
   product: string;
   exchange: string;
   yahooSymbol: string;
-  currency: Currency;
   quantity: number;
-  bep: number;
-  costBasisEur: number;
+  bep: number;          // EUR per share, fees excluded (Simple's "Net cash invested / share")
+  costBasisEur: number; // EUR total cost incl. fees
 };
 
 export type Price = {
