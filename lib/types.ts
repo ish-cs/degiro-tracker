@@ -28,7 +28,16 @@ export type CashEventKind =
   | "fx"
   | "buy"
   | "sell"
+  | "split"
+  | "merger"
   | "other";
+
+export type Split = {
+  date: string;
+  isin: string;
+  ratio: number; // newShares / oldShares (4 = 4-for-1; 0.1 = reverse 1-for-10)
+  description: string;
+};
 
 export type CashEvent = {
   date: string;
@@ -78,8 +87,8 @@ export type Returns = {
   incomeReturnEur: number;
   incomeReturnPct: number;
   totalReturnEur: number;
-  totalReturnPct: number;        // money-weighted (Modified Dietz)
-  totalReturnPctSimple: number;  // simple cost-basis return
+  totalReturnPct: number;        // annualized money-weighted (XIRR)
+  totalReturnPctSimple: number;  // cumulative cost-basis return
   costRatioPct: number;
 };
 

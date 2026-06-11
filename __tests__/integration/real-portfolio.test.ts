@@ -25,7 +25,7 @@ import {
   totalOtherIncomeEur,
 } from "@/lib/portfolio/cost-ratio";
 import { isinToTicker } from "@/lib/portfolio/isin-to-ticker";
-import { modifiedDietz } from "@/lib/portfolio/modified-dietz";
+import { xirr } from "@/lib/portfolio/xirr";
 import type { Tx, CashEvent, Position } from "@/lib/types";
 
 const fixturePath = (name: string) =>
@@ -33,6 +33,8 @@ const fixturePath = (name: string) =>
 
 // Pinned FX so the suite is deterministic. Roughly EUR/USD on 2026-06-11.
 const FX = { USDEUR: 0.866 };
+const fxLookup = (_iso: string, ccy: string) =>
+  ccy === "EUR" ? 1 : ccy === "USD" ? FX.USDEUR : 0;
 
 let events: CashEvent[];
 let txs: Tx[];
@@ -141,34 +143,34 @@ describe("cash, income, cost (matches DEGIRO statement + Simple Portfolio)", () 
   });
 
   it("dividend tax converts USD → EUR at pinned FX", () => {
-    const tax = totalTaxesEur(events, FX);
+    const tax = totalTaxesEur(events, fxLookup);
     // $0.69 net × 0.866 ≈ €0.60
     expect(tax).toBeCloseTo(0.69 * FX.USDEUR, 2);
   });
 
   it("gross dividends per ISIN (no tax netting); USD → EUR converted", () => {
-    const divs = totalDividendsEur(events, FX);
+    const divs = totalDividendsEur(events, fxLookup);
     // $4.62 net gross × 0.866 ≈ €4.00
     const total = Object.values(divs).reduce((s, v) => s + v, 0);
     expect(total).toBeCloseTo(4.62 * FX.USDEUR, 2);
   });
 
   it("DEGIRO Rebate Promotion = €6.90 other income", () => {
-    expect(totalOtherIncomeEur(events, FX)).toBeCloseTo(6.9, 2);
+    expect(totalOtherIncomeEur(events, fxLookup)).toBeCloseTo(6.9, 2);
   });
 
   it("total income (gross dividends + rebate) ≈ €10.90 (Simple shows €10.91)", () => {
-    const divs = totalDividendsEur(events, FX);
+    const divs = totalDividendsEur(events, fxLookup);
     const total =
       Object.values(divs).reduce((s, v) => s + v, 0) +
-      totalOtherIncomeEur(events, FX);
+      totalOtherIncomeEur(events, fxLookup);
     expect(total).toBeGreaterThan(10);
     expect(total).toBeLessThan(11.5);
     expect(Math.abs(total - 10.91)).toBeLessThan(1);
   });
 
   it("total costs (brokerage + tax, autofx baked-in) ≈ €39.60", () => {
-    const costs = totalCostsEur(events, txs, FX);
+    const costs = totalCostsEur(events, txs, fxLookup, false);
     expect(costs).toBeCloseTo(39 + 0.69 * FX.USDEUR, 2);
   });
 });
@@ -204,10 +206,14 @@ describe("returns (deterministic snapshot)", () => {
   };
 
   it("computeReturns produces internally consistent numbers", () => {
-    const divs = totalDividendsEur(events, FX);
-    const costs = totalCostsEur(events, txs, FX);
-    const other = totalOtherIncomeEur(events, FX);
-    const r = computeReturns(positions, divs, mockPrices, costs, other, txs);
+    const divs = totalDividendsEur(events, fxLookup);
+    const costs = totalCostsEur(events, txs, fxLookup, false);
+    const other = totalOtherIncomeEur(events, fxLookup);
+    const fxFn = (_iso: string, ccy: string) =>
+      ccy === "EUR" ? 1 : ccy === "USD" ? FX.USDEUR : 0;
+    const r = computeReturns(
+      positions, divs, mockPrices, costs, other, txs, events, fxFn, "2026-06-11",
+    );
 
     const expectedValue =
       30 * 310.55 + 15 * 153.04 + 7 * 120.04 + 4 * 210.12;
@@ -217,40 +223,33 @@ describe("returns (deterministic snapshot)", () => {
       (r.currentValueEur + r.incomeReturnEur - r.costBasisEur) /
       r.costBasisEur;
     expect(r.totalReturnPctSimple).toBeCloseTo(expectedSimple, 4);
+    // XIRR annualizes — on a portfolio held <1 year that's been profitable,
+    // the annualized rate will be HIGHER than the cumulative simple rate.
     expect(r.totalReturnPct).toBeGreaterThan(r.totalReturnPctSimple);
+    expect(r.totalReturnPct).toBeLessThan(2); // sanity: under 200% annualized
   });
 
   it("cost ratio is negative", () => {
-    const costs = totalCostsEur(events, txs, FX);
-    const r = computeReturns(positions, {}, mockPrices, costs, 0, txs);
+    const costs = totalCostsEur(events, txs, fxLookup, false);
+    const r = computeReturns(positions, {}, mockPrices, costs, 0, txs, events);
     expect(r.costRatioPct).toBeCloseTo(-costs / r.costBasisEur, 6);
     expect(r.costRatioPct).toBeLessThan(0);
   });
 });
 
-describe("Modified Dietz sanity", () => {
-  it("late contributions have lower weight", () => {
-    const r = modifiedDietz(
-      0,
-      1200,
-      [
-        { dateIso: "2026-01-01", amount: 1000 },
-        { dateIso: "2026-06-30", amount: 100 },
-      ],
-      "2026-01-01",
-      "2026-06-30",
-    );
-    expect(r).toBeCloseTo(0.1, 2);
+describe("XIRR sanity", () => {
+  it("matches simple 10% annual", () => {
+    const r = xirr([
+      { dateIso: "2025-01-01", amount: -1000 },
+      { dateIso: "2026-01-01", amount: 1100 },
+    ]);
+    expect(r).toBeCloseTo(0.1, 4);
   });
 
-  it("matches simple return when all flows are at period start", () => {
-    const r = modifiedDietz(
-      0,
-      1200,
-      [{ dateIso: "2026-01-01", amount: 1000 }],
-      "2026-01-01",
-      "2026-12-31",
-    );
-    expect(r).toBeCloseTo(0.2, 2);
+  it("returns null when no sign change in flows", () => {
+    expect(xirr([
+      { dateIso: "2025-01-01", amount: -100 },
+      { dateIso: "2026-01-01", amount: -100 },
+    ])).toBeNull();
   });
 });

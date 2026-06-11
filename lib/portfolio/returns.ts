@@ -1,5 +1,6 @@
-import type { Position, Returns, Tx } from "@/lib/types";
-import { modifiedDietz, type Cashflow } from "./modified-dietz";
+import type { CashEvent, Position, Returns, Tx } from "@/lib/types";
+import { xirr } from "./xirr";
+import { buildPortfolioCashflows, type FxLookup } from "./cashflows";
 
 export function computeReturns(
   positions: Position[],
@@ -8,6 +9,8 @@ export function computeReturns(
   totalCostsEur: number,
   otherIncomeEur: number = 0,
   txs: Tx[] = [],
+  events: CashEvent[] = [],
+  fx: FxLookup = (_iso, ccy) => (ccy === "EUR" ? 1 : 0),
   endIso: string = new Date().toISOString().slice(0, 10),
 ): Returns {
   let cost = 0, value = 0, income = 0;
@@ -22,15 +25,12 @@ export function computeReturns(
   const totalReturnEur = priceReturnEur + income;
   const simplePct = cost ? totalReturnEur / cost : 0;
 
-  // Money-weighted return — weighs each contribution by time deployed.
-  let mwPct = simplePct;
-  if (txs.length > 0) {
-    const sortedTxs = [...txs].sort((a, b) => a.date.localeCompare(b.date));
-    const periodStart = sortedTxs[0].date;
-    const flows: Cashflow[] = sortedTxs
-      .filter((t) => t.quantity > 0)
-      .map((t) => ({ dateIso: t.date, amount: t.valueEur + t.feeEur }));
-    mwPct = modifiedDietz(0, value + income, flows, periodStart, endIso);
+  // Annualized money-weighted return (XIRR) — what brokers and Simple Portfolio show.
+  let annualizedPct = simplePct;
+  if (txs.length > 0 || events.length > 0) {
+    const flows = buildPortfolioCashflows(events, txs, value, endIso, fx);
+    const rate = xirr(flows);
+    if (rate != null && Number.isFinite(rate)) annualizedPct = rate;
   }
 
   return {
@@ -41,9 +41,8 @@ export function computeReturns(
     incomeReturnEur: income,
     incomeReturnPct: cost ? income / cost : 0,
     totalReturnEur,
-    totalReturnPct: mwPct,
-    totalReturnPctSimple: simplePct,
-    // Negative — costs reduce return. Matches Simple Portfolio convention.
+    totalReturnPct: annualizedPct,        // XIRR (annualized, money-weighted)
+    totalReturnPctSimple: simplePct,      // cumulative cost-basis return
     costRatioPct: cost ? -totalCostsEur / cost : 0,
   };
 }

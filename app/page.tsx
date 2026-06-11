@@ -2,8 +2,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { parseAccountCsv, extractTxsFromAccount } from "@/lib/parsers/account";
 import { currentPositions } from "@/lib/portfolio/positions";
+import { extractSplits } from "@/lib/portfolio/splits";
+import { findUnrecognizedEvents } from "@/lib/portfolio/unrecognized";
 import { computeReturns } from "@/lib/portfolio/returns";
-import { totalCostsEur, totalDividendsEur, cashBalanceEur, totalOtherIncomeEur } from "@/lib/portfolio/cost-ratio";
+import { totalCostsEur, totalDividendsEur, totalOtherIncomeEur, totalCashEur } from "@/lib/portfolio/cost-ratio";
+import { buildHistoricalFx, makeFxLookup } from "@/lib/portfolio/historical-fx";
 import { Dropzone } from "@/components/Dropzone";
 import { KPIRow } from "@/components/KPIRow";
 import { Holdings, type HoldingRow } from "@/components/Holdings";
@@ -100,7 +103,9 @@ export default function Page() {
 
   // Derive Tx[] from cash events. Single source of truth.
   const txs = useMemo(() => extractTxsFromAccount(cashEvents), [cashEvents]);
-  const positions = useMemo(() => currentPositions(txs), [txs]);
+  const splits = useMemo(() => extractSplits(cashEvents), [cashEvents]);
+  const unrecognized = useMemo(() => findUnrecognizedEvents(cashEvents), [cashEvents]);
+  const positions = useMemo(() => currentPositions(txs, splits), [txs, splits]);
 
   useEffect(() => {
     if (positions.length === 0) return;
@@ -186,14 +191,36 @@ export default function Page() {
     }),
     [live],
   );
-  const dividendsByIsin = useMemo(() => totalDividendsEur(cashEvents, fx), [cashEvents, fx]);
-  const costsEur = useMemo(() => totalCostsEur(cashEvents, txs, fx), [cashEvents, txs, fx]);
-  const otherIncomeEur = useMemo(() => totalOtherIncomeEur(cashEvents, fx), [cashEvents, fx]);
-
+  const fxIndex = useMemo(() => buildHistoricalFx(cashEvents), [cashEvents]);
+  const fxLookup = useMemo(
+    () => makeFxLookup(fxIndex, { USD: fx.USDEUR, GBP: fx.GBPEUR }),
+    [fxIndex, fx],
+  );
+  const dividendsByIsin = useMemo(
+    () => totalDividendsEur(cashEvents, fxLookup),
+    [cashEvents, fxLookup],
+  );
+  const costsEur = useMemo(
+    () => totalCostsEur(cashEvents, txs, fxLookup),
+    [cashEvents, txs, fxLookup],
+  );
+  const otherIncomeEur = useMemo(
+    () => totalOtherIncomeEur(cashEvents, fxLookup),
+    [cashEvents, fxLookup],
+  );
   const returns = useMemo(() => {
     if (!ready) return null;
-    return computeReturns(positions, dividendsByIsin, live!.prices, costsEur, otherIncomeEur, txs);
-  }, [ready, positions, dividendsByIsin, costsEur, otherIncomeEur, live, txs]);
+    return computeReturns(
+      positions,
+      dividendsByIsin,
+      live!.prices,
+      costsEur,
+      otherIncomeEur,
+      txs,
+      cashEvents,
+      fxLookup,
+    );
+  }, [ready, positions, dividendsByIsin, costsEur, otherIncomeEur, live, txs, cashEvents, fxLookup]);
 
   const rows: HoldingRow[] = useMemo(() => {
     if (!returns || !live) return [];
@@ -220,7 +247,7 @@ export default function Page() {
     });
   }, [returns, live, positions, dividendsByIsin]);
 
-  const cash = useMemo(() => cashBalanceEur(cashEvents), [cashEvents]);
+  const cash = useMemo(() => totalCashEur(cashEvents, fxLookup), [cashEvents, fxLookup]);
 
   const firstTxIso = txs[0]?.date ?? new Date().toISOString().slice(0,10);
 
@@ -291,6 +318,23 @@ export default function Page() {
         <div className="glass p-3 text-sm text-[var(--color-text-secondary)]">
           No Yahoo Finance data for: {badBenchmarks.join(", ")}. Check the ticker symbol.
         </div>
+      ) : null}
+      {unrecognized.length > 0 ? (
+        <details className="glass p-3 text-sm text-[var(--color-text-secondary)]">
+          <summary className="cursor-pointer">
+            {unrecognized.reduce((n, g) => n + g.count, 0)} unrecognized event
+            {unrecognized.reduce((n, g) => n + g.count, 0) === 1 ? "" : "s"} —
+            totals may be off by €{unrecognized.reduce((s, g) => s + Math.abs(g.totalEur), 0).toFixed(2)}.
+          </summary>
+          <ul className="mt-2 space-y-1 mono text-xs">
+            {unrecognized.slice(0, 20).map((g) => (
+              <li key={`${g.kind}-${g.description}`}>
+                <span className="opacity-60">[{g.kind}]</span> {g.description} ×{g.count}
+                {g.totalEur !== 0 ? ` (€${g.totalEur.toFixed(2)})` : ""}
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       <Dropzone onFile={onFile} status={status} />

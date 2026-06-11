@@ -57,3 +57,20 @@ export async function history(symbol: string, range: string) {
 export async function fx(pair: string) {
   return quote(`${pair}=X`);
 }
+
+export type YahooSearchQuote = {
+  symbol?: string;
+  shortname?: string;
+  longname?: string;
+  quoteType?: string;
+  exchange?: string;
+  currency?: string;
+};
+
+type YahooSearchResult = { quotes?: YahooSearchQuote[] };
+
+export async function searchByIsin(query: string): Promise<YahooSearchQuote[]> {
+  const url = `https://query1.finance.yahoo.com/v1/finance/search?q=${encodeURIComponent(query)}&quotesCount=10&newsCount=0`;
+  const data = (await cachedFetch(url, 60 * 60 * 24 * 7)) as YahooSearchResult;
+  return data.quotes ?? [];
+}

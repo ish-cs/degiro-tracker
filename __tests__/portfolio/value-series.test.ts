@@ -5,7 +5,8 @@ import type { Tx } from "@/lib/types";
 const mk = (date: string, isin: string, qty: number, valueEur: number): Tx => ({
   date, time: "09:00", product: isin, isin, exchange: "TDG",
   quantity: qty, price: valueEur / Math.abs(qty), localCurrency: "EUR",
-  valueLocal: valueEur, valueEur, fxRate: 1, feeEur: 0, totalEur: valueEur, orderId: "o",
+  valueLocal: valueEur, valueEur, fxRate: 1, feeEur: 0, brokerFeeEur: 0,
+  autoFxFeeEur: 0, totalEur: valueEur, orderId: "o",
 });
 
 const day = (s: string) => Math.floor(new Date(`${s}T00:00:00Z`).getTime() / 1000);

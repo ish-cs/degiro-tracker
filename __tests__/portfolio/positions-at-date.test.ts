@@ -5,7 +5,8 @@ import type { Tx } from "@/lib/types";
 const mk = (date: string, isin: string, qty: number, price: number, valueEur: number, feeEur = 0): Tx => ({
   date, time: "09:00", product: isin, isin, exchange: "NDQ",
   quantity: qty, price, localCurrency: "USD", valueLocal: qty * price,
-  valueEur, fxRate: 1, feeEur, totalEur: valueEur + feeEur, orderId: "o",
+  valueEur, fxRate: 1, feeEur, brokerFeeEur: feeEur, autoFxFeeEur: 0,
+  totalEur: valueEur + feeEur, orderId: "o",
 });
 
 describe("positions-at-date", () => {

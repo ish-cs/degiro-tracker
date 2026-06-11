@@ -8,7 +8,7 @@ const mk = (over: Partial<Tx>): Tx => ({
   date: "2026-01-01", time: "09:00", product: "X", isin: "X1",
   exchange: "NDQ", quantity: 1, price: 100, localCurrency: "USD",
   valueLocal: 100, valueEur: 92, fxRate: 1.08, feeEur: 0.5,
-  totalEur: 92.5, orderId: "o1", ...over,
+  brokerFeeEur: 0.5, autoFxFeeEur: 0, totalEur: 92.5, orderId: "o1", ...over,
 });
 
 describe("currentPositions", () => {
@@ -46,5 +46,39 @@ describe("currentPositions", () => {
     ]);
     expect(positions[0].quantity).toBe(6);
     expect(positions[0].bep).toBeCloseTo(100);
+  });
+
+  it("4-for-1 stock split: qty quadruples, BEP quarters, cost basis unchanged", () => {
+    const positions = currentPositions(
+      [mk({ isin: "A", date: "2026-01-01", quantity: 10, valueEur: 2660, feeEur: 4 })],
+      [{ date: "2026-06-01", isin: "A", ratio: 4, description: "Stock split 4 for 1" }],
+    );
+    expect(positions[0].quantity).toBe(40);
+    expect(positions[0].bep).toBeCloseTo(2660 / 40);          // €66.50
+    expect(positions[0].costBasisEur).toBeCloseTo(2664);      // unchanged
+  });
+
+  it("reverse 1-for-10 split: qty divides by 10, BEP × 10", () => {
+    const positions = currentPositions(
+      [mk({ isin: "A", date: "2026-01-01", quantity: 100, valueEur: 1000, feeEur: 0 })],
+      [{ date: "2026-06-01", isin: "A", ratio: 0.1, description: "Reverse 1 for 10" }],
+    );
+    expect(positions[0].quantity).toBeCloseTo(10);
+    expect(positions[0].bep).toBeCloseTo(100);
+  });
+
+  it("split applies to existing holdings AT the split date, then later buys add fresh shares", () => {
+    const positions = currentPositions(
+      [
+        mk({ isin: "A", date: "2026-01-01", quantity: 10, valueEur: 2000, feeEur: 0 }),
+        mk({ isin: "A", date: "2026-07-01", quantity: 20, valueEur: 1000, feeEur: 0 }),
+      ],
+      [{ date: "2026-06-01", isin: "A", ratio: 4, description: "Stock split 4:1" }],
+    );
+    // Pre-split: 10 × €200 BEP. After split (×4): 40 sh at €50 BEP, cost €2000.
+    // After post-split buy 20 sh @ €50/sh (€1000): 60 sh total.
+    expect(positions[0].quantity).toBe(60);
+    expect(positions[0].costBasisEur).toBeCloseTo(3000);
+    expect(positions[0].bep).toBeCloseTo(50);
   });
 });
